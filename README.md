@@ -1,6 +1,12 @@
+<<<<<<< HEAD
 # Facial Expression Recognition with StyleGAN
 
 End-to-end workflow for FER2013: generate/curate images, train a **ResNet‑18** classifier with PyTorch/timm, and deploy a PySide6 + OpenCV desktop app for real-time inference. The repo already includes trained weights, Haar Cascade, and PyInstaller config for shipping `.exe` / `.app`.
+=======
+# Emotion Recognition Suite (Training + Desktop)
+
+End-to-end workflow for FER2013: generate/curate images, train a **ResNet‑18** classifier with PyTorch+timm, and deploy a PySide6 + OpenCV desktop app for real-time inference. The repo already includes trained weights, Haar Cascade, and PyInstaller config for shipping `.exe` / `.app`.
+>>>>>>> 0dbe871 (Update README and add FER StyleGAN notebooks)
 
 ## Repository map
 
