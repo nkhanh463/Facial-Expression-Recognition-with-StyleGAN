@@ -21,7 +21,7 @@ Thumbs.db
 .idea/
 .vscode/
 
-models/*.pth
+
 assets/*.mp4
 *.zip
 *.dmg
