@@ -1,69 +1,45 @@
-# Facial Expression Recognition — Training Pipeline
+# Facial Expression Recognition with StyleGAN
 
-Complete PyTorch + timm training stack for Facial Expression Recognition (FER) with ResNet‑18 or MobileNetV3‑Small backbones. Includes class-balanced sampling, aggressive augmentations, MixUp/CutMix, cosine LR with warmup, AMP, autosave, and ready-to-export `.pth` weights for desktop or mobile apps.
+End-to-end workflow for FER2013: generate/curate images, train a **ResNet‑18** classifier with PyTorch+timm, and deploy a PySide6 + OpenCV desktop app for real-time inference. The repo already includes trained weights, Haar Cascade, and PyInstaller config for shipping `.exe` / `.app`.
 
-## Features
-- End-to-end training script with resume + autosave checkpoints
-- ImageFolder data loading with face-safe augmentations and balanced sampler
-- MixUp / CutMix with label smoothing for stable optimization
-- Cosine decay scheduler, AdamW optimizer, AMP mixed precision
-- Best-weight export for PySide6 desktop, PyInstaller, or CoreML apps
-
-## Project Layout
-```text
-fer_project/
-├─ fer_train_singlefile_speed_patched.py
-├─ requirements.txt
-├─ checkpoints/             # auto-generated (epoch_xxx.pt, class_names.json)
-├─ weights/                 # best .pth saved here
-└─ dataset/
-   ├─ train/
-   │   └─ emotion folders...
-   └─ val/
-       └─ emotion folders...
-```
-
-## Dataset Structure
-Emotion folders must be identical between `train/` and `val/`. Supported labels:
+## Repository map
 
 ```
-angry, disgust, fear, happy, sad, surprise, neutral
+├─ main.py                          # PySide6 GUI: webcam + single-image inference
+├─ fer_train_singlefile_speed_patched.py  # All-in-one ResNet-18 training script
+├─ models/resnet18_best_from_scratch.pth  # Default desktop weights
+├─ assets/haarcascade_frontalface_default.xml
+├─ class_names.json                 # Fixed label order (angry → neutral)
+├─ Generate.ipynb                   # StyleGAN2-ADA FER image synthesis
+├─ filter_img.ipynb                 # GAN image filtering via MTCNN
+├─ prj_dpl.ipynb                    # FER-2013 balancing + augmentation
+├─ file_cascade.py                  # Print cv2 Haar cascade directory
+└─ build/, dist/                    # PyInstaller artifacts
 ```
 
-## Setup
-```bash
-python -m venv venv
-```
+## Environment
 
-Activate the environment:
-
-```powershell
-# Windows
-venv\Scripts\activate
-```
+Requirements: Python 3.10+, pip, Git, PyTorch 2.2 (CUDA 11.8 toolchain), OpenCV, PySide6. Training is GPU-oriented (CUDA or Apple MPS). The desktop app runs on CPU but benefits from CUDA + FP16 when available.
 
 ```bash
-# macOS / Linux
-source venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
+python -m venv .venv
+source .venv/bin/activate          # .venv\Scripts\activate on Windows
 pip install -r requirements.txt
 ```
 
-## Training
-### Basic (ResNet-18 defaults)
-```bash
-python fer_train_singlefile_speed_patched.py \
-  --train_dir ./dataset/train \
-  --val_dir ./dataset/val \
-  --epochs 40 \
-  --batch_size 128
-```
+Tip: keep a lightweight virtualenv for the GUI and a CUDA-enabled environment (local or Colab) for heavy training/notebook work.
 
-### MixUp + CutMix + Resume
+## Training pipeline (`fer_train_singlefile_speed_patched.py`)
+
+- **Backbone**: ResNet‑18 only. FC head replaced with Dropout + Linear for 7 FER classes (`class_names.json`).  
+- **Dataset**: ImageFolder layout (`dataset/train/<label>`, `dataset/val/<label>`) with identical label sets.  
+- **Samplers & Augmentations**: WeightedRandomSampler, strong spatial/color transforms, RandomErasing.  
+- **Optimization**: AdamW, cosine LR with 3‑epoch warmup, AMP, label smoothing, optional MixUp/CutMix.  
+- **Resilience**: Autosave checkpoints every N minutes, full checkpoint each epoch, auto-resume from the latest `epoch_*.pt`.  
+- **Export**: Best validation accuracy weights saved to `weights/resnet18_best_from_scratch.pth` → copy to `models/` for the GUI.
+
+Example run:
+
 ```bash
 python fer_train_singlefile_speed_patched.py \
   --train_dir ./dataset/train \
@@ -73,78 +49,95 @@ python fer_train_singlefile_speed_patched.py \
   --lr 1e-3 \
   --use_mixup \
   --use_cutmix \
-  --resume
+  --autosave_minutes 10
 ```
 
-### Use MobileNetV3-Small
+Hints:
+- Watch `[Speed]` logs to tune `batch_size` / `num_workers`.  
+- If you change labels, delete `checkpoints/class_names.json`; the script will regenerate it.  
+- Keep only the best `.pth` inside `models/` before building the desktop app.
+
+## Desktop app (`main.py`)
+
+Features:
+- Real-time webcam stream with FPS overlay; draws the largest detected face and prints the top emotion.  
+- `📷 Open Image` button for single-photo inference using the same engine.  
+- Toggles for `Use GPU (CUDA)` and `FP16` must be set before starting the webcam thread.  
+- Lazy model loading + QThread keep the UI responsive; `resource_path` handles PyInstaller bundles.
+
+Run:
+
 ```bash
-python fer_train_singlefile_speed_patched.py ... --model mobilenet_v3_small
+python main.py
 ```
 
-## Key Arguments
+Notes:
+- Ensure `models/resnet18_best_from_scratch.pth` and `assets/haarcascade_frontalface_default.xml` exist. Use `python file_cascade.py` to locate the cascade inside OpenCV if needed.  
+- `IMG_SIZE = 192` with ImageNet normalization; class order must match `class_names.json`.  
+- If cascade is missing, the app tries `cv2.data.haarcascades` as a fallback.
 
-| Argument | Description |
+## Packaging with PyInstaller
+
+Fast path (inline command):
+
+```bash
+# macOS
+pyinstaller --noconfirm --windowed --onefile \
+  --add-data "assets/haarcascade_frontalface_default.xml:assets" \
+  --add-data "models/resnet18_best_from_scratch.pth:models" \
+  main.py
+
+# Windows
+pyinstaller --noconfirm --windowed --onefile ^
+  --add-data "assets\\haarcascade_frontalface_default.xml;assets" ^
+  --add-data "models\\resnet18_best_from_scratch.pth;models" ^
+  main.py
+```
+
+`main.spec` already:
+- Adds cascade + weights under `datas`.  
+- Wraps the binary in a macOS bundle with `NSCameraUsageDescription`.  
+- Uses `bundle_identifier='com.khanh.emotion'` (update if you need custom signing).
+
+Artifacts live in `dist/dist/main` (single binary) or `dist/dist/main.app`. `build/` holds PyInstaller caches.
+
+## Notebook utilities
+
+| Notebook | Purpose |
 | --- | --- |
-| `--train_dir` | Path to training ImageFolder |
-| `--val_dir` | Path to validation ImageFolder |
-| `--model` | `resnet18` (default) or `mobilenet_v3_small` |
-| `--epochs` | Number of training epochs (default 40) |
-| `--batch_size` | Batch size (default 128) |
-| `--lr` | Learning rate (default `1e-3`) |
-| `--use_mixup` / `--use_cutmix` | Enable MixUp or CutMix |
-| `--autosave_minutes` | Autosave interval in minutes |
-| `--resume` | Resume from the most recent checkpoint |
+| `Generate.ipynb` | Colab workflow: clone `stylegan2-ada-pytorch`, load a trained `.pkl`, configure `truncation_psi`, and generate ~1.3k FER images per class to Google Drive. |
+| `filter_img.ipynb` | Uses `facenet-pytorch` MTCNN to keep only GAN images containing a detected face; writes to a filtered folder. |
+| `prj_dpl.ipynb` | FER‑2013 balancing pipeline: analyze distribution, augment underrepresented classes with Albumentations, and write a balanced dataset (`TARGET_PER_CLASS = 3500`). |
 
-## Output Files
-After training, you will have:
+Paths assume Colab + Google Drive; adjust `/content/drive/...` to match your workspace.
 
-```text
-checkpoints/
-  ├─ epoch_001.pt
-  ├─ epoch_002.pt
-  └─ class_names.json
+## Key assets & helpers
 
-weights/
-  └─ resnet18_best_from_scratch.pth
-```
+- `class_names.json`: canonical label ordering. Delete + retrain if your dataset changes.  
+- `models/` & `assets/`: packaged by PyInstaller; keep contents minimal to shrink binaries.  
+- `file_cascade.py`: prints `cv2.data.haarcascades` so you can copy the cascade into `assets/`.  
+- `StyleGAN2_FER2013_Generator.ipynb`: extended StyleGAN2 workflow separate from `Generate.ipynb`.  
+- `build/`, `dist/`: safe to remove before a clean rebuild.
 
-`resnet18_best_from_scratch.pth` can be consumed by PySide6 desktop apps, PyInstaller executables, or exported to CoreML for iOS (SwiftUI) apps.
+## Suggested workflow
 
-## Quick Inference Example
-```python
-import cv2, torch
-import numpy as np
-from torchvision import transforms
-from fer_model import build_model
+1. **Prepare data** – balance FER‑2013 with `prj_dpl.ipynb`, optionally augment with GAN images (`Generate.ipynb` → `filter_img.ipynb`).  
+2. **Train ResNet‑18** – run `fer_train_singlefile_speed_patched.py`, monitor autosave/checkpoints, obtain `resnet18_best_from_scratch.pth`.  
+3. **Verify desktop app** – copy the weight + `class_names.json`, run `python main.py`, test webcam and single-image inference.  
+4. **Package** – build with PyInstaller or directly via `pyinstaller main.spec`, add codesigning if required on macOS.  
+5. **Distribute** – share binaries from `dist/`, with instructions for enabling camera permissions.
 
-IMG_SIZE = 224
-mean = [0.485, 0.456, 0.406]
-std = [0.229, 0.224, 0.225]
+## Troubleshooting
 
-tf = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean, std),
-])
+- **Missing Haar Cascade** – run `python file_cascade.py`, copy the file into `assets/`, or install `opencv-data`.  
+- **Class order mismatch** – remove `checkpoints/class_names.json` if label folders changed; rerun training to regenerate.  
+- **Webcam won’t open** – try another camera index; verify OS-level camera permissions (macOS: `System Settings → Privacy & Security → Camera`).  
+- **CUDA unavailable** – ensure the correct PyTorch build is installed; disable the GPU checkbox to force CPU inference.  
+- **FP16 instability** – only enable when CUDA is active; stick to FP32 on CPU/MPS.
 
-img = cv2.imread("face.jpg")
-img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-img = tf(img).unsqueeze(0)
+## Next steps
 
-model = build_model("resnet18", 7)
-state = torch.load("weights/resnet18_best_from_scratch.pth", map_location="cpu")
-model.load_state_dict(state)
-model.eval()
-
-with torch.no_grad():
-    logits = model(img)
-    cls = logits.argmax(1).item()
-    print("Predicted class:", cls)
-```
-
-## Notes
-- Optimizer: **AdamW**
-- Scheduler: **CosineAnnealingLR** (warmup implemented via LambdaLR)
-- Loss: **CrossEntropy** with label smoothing
-- AMP mixed precision for faster training on CUDA
-- Autosave prevents progress loss during long runs
+- Experiment with additional ResNet‑18 tweaks (e.g., CutMix/MixUp schedules, optimizer tuning).  
+- Integrate MediaPipe or RetinaFace detectors for better bounding boxes.  
+- Add export paths (TorchScript/CoreML) if you plan to ship mobile or edge versions.  
+- Write small regression scripts to benchmark ResNet‑18 on curated image sets before packaging.
